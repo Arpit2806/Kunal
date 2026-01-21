@@ -1,165 +1,229 @@
 import streamlit as st
 import pandas as pd
-import joblib
-import matplotlib.pyplot as plt
+import numpy as np
 
-# -------------------------------
+from mlxtend.frequent_patterns import apriori, association_rules
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+import networkx as nx
+import plotly.express as px
+
+# --------------------------------------------------
 # PAGE CONFIG
-# -------------------------------
+# --------------------------------------------------
 st.set_page_config(
-    page_title="ARM Business Intelligence Dashboard",
+    page_title="Retail Banking Association Rule Dashboard",
     layout="wide"
 )
 
-st.title("📊 Association Rule Mining Dashboard")
-st.markdown("**Interactive Business Insights from Market Basket Model**")
+st.title("🏦 Retail Banking Association Rule Mining Dashboard")
+st.markdown("**Interactive Market Basket Analysis on Clean Banking Dataset**")
 
-# -------------------------------
-# LOAD MODEL
-# -------------------------------
-MODEL_PATH = "ARM model.pkl"
+# --------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------
+DATA_PATH = "Clean_data_retail_banking_customers.csv"
 
-@st.cache_resource
-def load_model():
-    return joblib.load(MODEL_PATH)
+@st.cache_data
+def load_data():
+    df = pd.read_csv(DATA_PATH)
+    return df
 
-try:
-    model = load_model()
-    st.success("✅ Model Loaded Successfully")
-except Exception as e:
-    st.error(f"❌ Error loading model: {e}")
-    st.stop()
+df = load_data()
 
-# -------------------------------
-# UNDERSTAND MODEL CONTENT
-# -------------------------------
-st.subheader("📦 Model Contents")
-st.write(type(model))
+st.success("✅ Dataset Loaded Successfully")
 
-if isinstance(model, dict):
-    st.write("Keys inside model:", model.keys())
+# --------------------------------------------------
+# DATA PREVIEW
+# --------------------------------------------------
+with st.expander("📄 Preview Dataset"):
+    st.dataframe(df.head())
 
-# Expecting keys like:
-# model["frequent_itemsets"]
-# model["rules"]
+# --------------------------------------------------
+# PREPROCESSING (BINARY ENCODING)
+# --------------------------------------------------
+st.subheader("⚙️ Data Preparation")
 
-frequent_itemsets = None
-rules = None
+# Keep only binary columns (0/1 or Yes/No)
+binary_df = df.copy()
 
-if isinstance(model, dict):
-    frequent_itemsets = model.get("frequent_itemsets")
-    rules = model.get("rules")
+for col in binary_df.columns:
+    binary_df[col] = binary_df[col].apply(lambda x: 1 if x == 1 or x == "Yes" else 0)
 
-# -------------------------------
-# SIDEBAR FILTERS
-# -------------------------------
-st.sidebar.header("🎛 Filters")
+st.write("Binary Encoded Dataset Shape:", binary_df.shape)
 
-min_support = st.sidebar.slider(
-    "Minimum Support",
-    0.01, 1.0, 0.05, 0.01
-)
+# --------------------------------------------------
+# SIDEBAR CONTROLS
+# --------------------------------------------------
+st.sidebar.header("🎛 Rule Mining Controls")
 
-min_confidence = st.sidebar.slider(
-    "Minimum Confidence",
-    0.1, 1.0, 0.5, 0.05
-)
+min_support = st.sidebar.slider("Minimum Support", 0.01, 0.5, 0.05, 0.01)
+min_confidence = st.sidebar.slider("Minimum Confidence", 0.1, 1.0, 0.6, 0.05)
+min_lift = st.sidebar.slider("Minimum Lift", 0.5, 5.0, 1.0, 0.1)
 
-min_lift = st.sidebar.slider(
-    "Minimum Lift",
-    0.5, 5.0, 1.0, 0.1
-)
-
-# -------------------------------
+# --------------------------------------------------
 # FREQUENT ITEMSETS
-# -------------------------------
-if frequent_itemsets is not None:
-    st.subheader("📌 Frequent Itemsets")
+# --------------------------------------------------
+st.subheader("📌 Frequent Itemsets")
 
-    fi_df = frequent_itemsets.copy()
-    fi_df = fi_df[fi_df["support"] >= min_support]
-    fi_df = fi_df.sort_values("support", ascending=False)
+frequent_itemsets = apriori(
+    binary_df,
+    min_support=min_support,
+    use_colnames=True
+)
 
-    st.dataframe(fi_df, use_container_width=True)
+st.write("Total Itemsets Found:", len(frequent_itemsets))
 
-    # ---- Visualization
-    st.subheader("📈 Top Itemsets by Support")
+frequent_itemsets["length"] = frequent_itemsets["itemsets"].apply(lambda x: len(x))
+frequent_itemsets = frequent_itemsets.sort_values("support", ascending=False)
 
-    top_items = fi_df.head(10)
+st.dataframe(frequent_itemsets.head(20), use_container_width=True)
 
-    fig, ax = plt.subplots()
-    ax.barh(
-        top_items["itemsets"].astype(str),
-        top_items["support"]
-    )
-    ax.set_xlabel("Support")
-    ax.set_ylabel("Itemsets")
-    ax.invert_yaxis()
-
-    st.pyplot(fig)
-
-else:
-    st.warning("⚠️ Frequent itemsets not found in model.")
-
-# -------------------------------
+# --------------------------------------------------
 # ASSOCIATION RULES
-# -------------------------------
-if rules is not None:
-    st.subheader("🔗 Association Rules")
+# --------------------------------------------------
+st.subheader("🔗 Association Rules")
 
-    rules_df = rules.copy()
-    rules_df = rules_df[
-        (rules_df["confidence"] >= min_confidence) &
-        (rules_df["lift"] >= min_lift)
-    ].sort_values("confidence", ascending=False)
+rules = association_rules(
+    frequent_itemsets,
+    metric="confidence",
+    min_threshold=min_confidence
+)
 
-    st.dataframe(rules_df, use_container_width=True)
+rules = rules[rules["lift"] >= min_lift]
+rules = rules.sort_values(["confidence", "lift"], ascending=False)
 
-    # ---- Visualization 1: Confidence
-    st.subheader("📊 Top Rules by Confidence")
+st.write("Total Rules Generated:", len(rules))
+st.dataframe(rules.head(20), use_container_width=True)
 
-    top_rules = rules_df.head(10)
+# --------------------------------------------------
+# TOP 10 RULES KPI
+# --------------------------------------------------
+st.subheader("🏆 Top 10 Associations")
 
-    fig2, ax2 = plt.subplots()
-    ax2.barh(
-        top_rules["antecedents"].astype(str),
-        top_rules["confidence"]
-    )
-    ax2.set_xlabel("Confidence")
-    ax2.set_ylabel("Antecedents")
-    ax2.invert_yaxis()
+top10 = rules.head(10)[
+    ["antecedents", "consequents", "support", "confidence", "lift"]
+].copy()
 
-    st.pyplot(fig2)
+top10["antecedents"] = top10["antecedents"].astype(str)
+top10["consequents"] = top10["consequents"].astype(str)
 
-    # ---- Visualization 2: Lift vs Confidence
-    st.subheader("📉 Lift vs Confidence")
+st.dataframe(top10, use_container_width=True)
 
-    fig3, ax3 = plt.subplots()
-    ax3.scatter(
-        rules_df["confidence"],
-        rules_df["lift"]
-    )
-    ax3.set_xlabel("Confidence")
-    ax3.set_ylabel("Lift")
+# --------------------------------------------------
+# VISUALIZATION 1 — SUPPORT BAR CHART
+# --------------------------------------------------
+st.subheader("📊 Top Itemsets by Support")
 
-    st.pyplot(fig3)
+top_items = frequent_itemsets.head(10)
 
-else:
-    st.warning("⚠️ Association rules not found in model.")
+fig1 = px.bar(
+    top_items,
+    x="support",
+    y=top_items["itemsets"].astype(str),
+    orientation="h",
+    title="Top 10 Frequent Itemsets"
+)
 
-# -------------------------------
+st.plotly_chart(fig1, use_container_width=True)
+
+# --------------------------------------------------
+# VISUALIZATION 2 — CONFIDENCE BAR CHART
+# --------------------------------------------------
+st.subheader("📈 Top Rules by Confidence")
+
+top_rules = rules.head(10)
+
+fig2 = px.bar(
+    top_rules,
+    x="confidence",
+    y=top_rules["antecedents"].astype(str),
+    orientation="h",
+    title="Top 10 Rules by Confidence"
+)
+
+st.plotly_chart(fig2, use_container_width=True)
+
+# --------------------------------------------------
+# VISUALIZATION 3 — LIFT VS CONFIDENCE SCATTER
+# --------------------------------------------------
+st.subheader("📉 Lift vs Confidence")
+
+fig3 = px.scatter(
+    rules,
+    x="confidence",
+    y="lift",
+    size="support",
+    hover_data=["antecedents", "consequents"],
+    title="Lift vs Confidence Scatter Plot"
+)
+
+st.plotly_chart(fig3, use_container_width=True)
+
+# --------------------------------------------------
+# VISUALIZATION 4 — HEATMAP
+# --------------------------------------------------
+st.subheader("🔥 Metric Correlation Heatmap")
+
+heatmap_data = rules[["support", "confidence", "lift", "leverage", "conviction"]]
+
+fig4, ax = plt.subplots()
+sns.heatmap(
+    heatmap_data.corr(),
+    annot=True,
+    cmap="coolwarm",
+    ax=ax
+)
+st.pyplot(fig4)
+
+# --------------------------------------------------
+# VISUALIZATION 5 — NETWORK GRAPH
+# --------------------------------------------------
+st.subheader("🕸 Association Network Map")
+
+G = nx.DiGraph()
+
+network_rules = rules.head(15)
+
+for _, row in network_rules.iterrows():
+    a = list(row["antecedents"])[0]
+    c = list(row["consequents"])[0]
+    G.add_edge(a, c, weight=row["confidence"])
+
+pos = nx.spring_layout(G, seed=42)
+
+fig5, ax = plt.subplots(figsize=(8, 6))
+nx.draw(
+    G,
+    pos,
+    with_labels=True,
+    node_size=2500,
+    font_size=10,
+    ax=ax
+)
+
+st.pyplot(fig5)
+
+# --------------------------------------------------
 # BUSINESS INSIGHTS
-# -------------------------------
-st.subheader("💡 Business Interpretation")
+# --------------------------------------------------
+st.subheader("💡 Business Insights")
 
 st.markdown("""
-- **High Support Itemsets** → Popular product combinations  
-- **High Confidence Rules** → Strong cross-sell opportunity  
-- **High Lift Rules** → True business impact beyond random chance  
+### 🎯 How to Interpret This Dashboard
 
-👉 These insights help in:
-- Product bundling  
-- Targeted marketing  
-- Cross-selling strategy  
-- Customer segmentation  
+- **High Support** → Products widely adopted together  
+- **High Confidence** → Strong upsell potential  
+- **High Lift** → True association beyond chance  
+- **Network Map** → Visual cross-sell pathways  
+
+### 📌 Business Use-Cases
+✔ Product Bundling  
+✔ Personalized Campaigns  
+✔ Cross-selling Strategy  
+✔ Portfolio Optimization  
+✔ Revenue Uplift  
+
+This dashboard converts analytical results into actionable business intelligence.
 """)
