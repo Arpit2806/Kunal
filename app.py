@@ -45,13 +45,14 @@ with st.expander("📄 Preview Dataset"):
 # --------------------------------------------------
 st.subheader("⚙️ Data Preparation")
 
-# Keep only binary columns (0/1 or Yes/No)
 binary_df = df.copy()
 
 for col in binary_df.columns:
-    binary_df[col] = binary_df[col].apply(lambda x: 1 if x == 1 or x == "Yes" else 0)
+    binary_df[col] = binary_df[col].apply(
+        lambda x: 1 if x == 1 or x == "Yes" else 0
+    )
 
-st.write("Binary Encoded Dataset Shape:", binary_df.shape)
+st.write("Binary Dataset Shape:", binary_df.shape)
 
 # --------------------------------------------------
 # SIDEBAR CONTROLS
@@ -73,11 +74,10 @@ frequent_itemsets = apriori(
     use_colnames=True
 )
 
-st.write("Total Itemsets Found:", len(frequent_itemsets))
-
-frequent_itemsets["length"] = frequent_itemsets["itemsets"].apply(lambda x: len(x))
+frequent_itemsets["length"] = frequent_itemsets["itemsets"].apply(len)
 frequent_itemsets = frequent_itemsets.sort_values("support", ascending=False)
 
+st.write("Total Itemsets Found:", len(frequent_itemsets))
 st.dataframe(frequent_itemsets.head(20), use_container_width=True)
 
 # --------------------------------------------------
@@ -94,20 +94,21 @@ rules = association_rules(
 rules = rules[rules["lift"] >= min_lift]
 rules = rules.sort_values(["confidence", "lift"], ascending=False)
 
+# 🔧 FIX: Convert frozenset → string (Plotly safe)
+rules["antecedents_str"] = rules["antecedents"].apply(lambda x: ", ".join(list(x)))
+rules["consequents_str"] = rules["consequents"].apply(lambda x: ", ".join(list(x)))
+
 st.write("Total Rules Generated:", len(rules))
 st.dataframe(rules.head(20), use_container_width=True)
 
 # --------------------------------------------------
-# TOP 10 RULES KPI
+# TOP 10 RULES TABLE
 # --------------------------------------------------
 st.subheader("🏆 Top 10 Associations")
 
 top10 = rules.head(10)[
-    ["antecedents", "consequents", "support", "confidence", "lift"]
-].copy()
-
-top10["antecedents"] = top10["antecedents"].astype(str)
-top10["consequents"] = top10["consequents"].astype(str)
+    ["antecedents_str", "consequents_str", "support", "confidence", "lift"]
+]
 
 st.dataframe(top10, use_container_width=True)
 
@@ -116,12 +117,13 @@ st.dataframe(top10, use_container_width=True)
 # --------------------------------------------------
 st.subheader("📊 Top Itemsets by Support")
 
-top_items = frequent_itemsets.head(10)
+top_items = frequent_itemsets.head(10).copy()
+top_items["itemsets_str"] = top_items["itemsets"].astype(str)
 
 fig1 = px.bar(
     top_items,
     x="support",
-    y=top_items["itemsets"].astype(str),
+    y="itemsets_str",
     orientation="h",
     title="Top 10 Frequent Itemsets"
 )
@@ -133,12 +135,12 @@ st.plotly_chart(fig1, use_container_width=True)
 # --------------------------------------------------
 st.subheader("📈 Top Rules by Confidence")
 
-top_rules = rules.head(10)
+top_rules = rules.head(10).copy()
 
 fig2 = px.bar(
     top_rules,
     x="confidence",
-    y=top_rules["antecedents"].astype(str),
+    y="antecedents_str",
     orientation="h",
     title="Top 10 Rules by Confidence"
 )
@@ -155,7 +157,7 @@ fig3 = px.scatter(
     x="confidence",
     y="lift",
     size="support",
-    hover_data=["antecedents", "consequents"],
+    hover_data=["antecedents_str", "consequents_str"],
     title="Lift vs Confidence Scatter Plot"
 )
 
@@ -183,12 +185,11 @@ st.pyplot(fig4)
 st.subheader("🕸 Association Network Map")
 
 G = nx.DiGraph()
-
 network_rules = rules.head(15)
 
 for _, row in network_rules.iterrows():
-    a = list(row["antecedents"])[0]
-    c = list(row["consequents"])[0]
+    a = row["antecedents_str"]
+    c = row["consequents_str"]
     G.add_edge(a, c, weight=row["confidence"])
 
 pos = nx.spring_layout(G, seed=42)
@@ -213,17 +214,17 @@ st.subheader("💡 Business Insights")
 st.markdown("""
 ### 🎯 How to Interpret This Dashboard
 
-- **High Support** → Products widely adopted together  
-- **High Confidence** → Strong upsell potential  
-- **High Lift** → True association beyond chance  
-- **Network Map** → Visual cross-sell pathways  
+- **High Support** → Popular product combinations  
+- **High Confidence** → Strong upselling opportunity  
+- **High Lift** → True association beyond randomness  
+- **Network Graph** → Cross-sell relationship visualization  
 
-### 📌 Business Use-Cases
-✔ Product Bundling  
-✔ Personalized Campaigns  
-✔ Cross-selling Strategy  
-✔ Portfolio Optimization  
-✔ Revenue Uplift  
+### 📌 Business Value
+✔ Product Bundling Strategy  
+✔ Targeted Campaign Design  
+✔ Cross-sell Optimization  
+✔ Revenue Growth Enablement  
+✔ Customer Behavior Intelligence  
 
-This dashboard converts analytical results into actionable business intelligence.
+This dashboard transforms analytical models into actionable decision intelligence.
 """)
