@@ -4,227 +4,310 @@ import numpy as np
 
 from mlxtend.frequent_patterns import apriori, association_rules
 
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_score
+
 import matplotlib.pyplot as plt
 import seaborn as sns
 import networkx as nx
 import plotly.express as px
 
-# --------------------------------------------------
+# ======================================================
 # PAGE CONFIG
-# --------------------------------------------------
+# ======================================================
 st.set_page_config(
-    page_title="Retail Banking Association Rule Dashboard",
+    page_title="Banking Analytics Dashboard",
     layout="wide"
 )
 
-st.title("🏦 Retail Banking Association Rule Mining Dashboard")
-st.markdown("**Interactive Market Basket Analysis on Clean Banking Dataset**")
+st.title("🏦 Banking Analytics Dashboard")
+st.markdown("**Association Rules + K-Means Clustering on Retail Banking Data**")
 
-# --------------------------------------------------
-# LOAD DATA
-# --------------------------------------------------
+# ======================================================
+# LOAD DATA (COMMON)
+# ======================================================
 DATA_PATH = "Clean_data_retail_banking_customers.csv"
 
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATA_PATH)
-    return df
+    return pd.read_csv(DATA_PATH)
 
 df = load_data()
 
-st.success("✅ Dataset Loaded Successfully")
+# ======================================================
+# SIDEBAR NAVIGATION
+# ======================================================
+st.sidebar.title("📂 Navigation")
+page = st.sidebar.radio(
+    "Select Analysis Page",
+    ["📊 Association Rule Mining", "📈 K-Means Clustering"]
+)
 
-# --------------------------------------------------
-# DATA PREVIEW
-# --------------------------------------------------
-with st.expander("📄 Preview Dataset"):
-    st.dataframe(df.head())
+# ======================================================
+# ================= ARM PAGE ===========================
+# ======================================================
+if page == "📊 Association Rule Mining":
 
-# --------------------------------------------------
-# PREPROCESSING (BINARY ENCODING)
-# --------------------------------------------------
-st.subheader("⚙️ Data Preparation")
+    st.header("📊 Association Rule Mining")
 
-binary_df = df.copy()
+    with st.expander("📄 Dataset Preview"):
+        st.dataframe(df.head())
 
-for col in binary_df.columns:
-    binary_df[col] = binary_df[col].apply(
-        lambda x: 1 if x == 1 or x == "Yes" else 0
+    # -----------------------------
+    # Binary Encoding
+    # -----------------------------
+    binary_df = df.copy()
+    for col in binary_df.columns:
+        binary_df[col] = binary_df[col].apply(lambda x: 1 if x == 1 or x == "Yes" else 0)
+
+    # -----------------------------
+    # Sidebar Controls
+    # -----------------------------
+    st.sidebar.subheader("⚙️ ARM Controls")
+    min_support = st.sidebar.slider("Minimum Support", 0.01, 0.5, 0.05, 0.01)
+    min_confidence = st.sidebar.slider("Minimum Confidence", 0.1, 1.0, 0.6, 0.05)
+    min_lift = st.sidebar.slider("Minimum Lift", 0.5, 5.0, 1.0, 0.1)
+
+    # -----------------------------
+    # Frequent Itemsets
+    # -----------------------------
+    st.subheader("📌 Frequent Itemsets")
+
+    frequent_itemsets = apriori(
+        binary_df,
+        min_support=min_support,
+        use_colnames=True
     )
 
-st.write("Binary Dataset Shape:", binary_df.shape)
+    frequent_itemsets["length"] = frequent_itemsets["itemsets"].apply(len)
+    frequent_itemsets = frequent_itemsets.sort_values("support", ascending=False)
 
-# --------------------------------------------------
-# SIDEBAR CONTROLS
-# --------------------------------------------------
-st.sidebar.header("🎛 Rule Mining Controls")
+    st.write("Total Itemsets:", len(frequent_itemsets))
+    st.dataframe(frequent_itemsets.head(20), use_container_width=True)
 
-min_support = st.sidebar.slider("Minimum Support", 0.01, 0.5, 0.05, 0.01)
-min_confidence = st.sidebar.slider("Minimum Confidence", 0.1, 1.0, 0.6, 0.05)
-min_lift = st.sidebar.slider("Minimum Lift", 0.5, 5.0, 1.0, 0.1)
+    # -----------------------------
+    # Association Rules
+    # -----------------------------
+    st.subheader("🔗 Association Rules")
 
-# --------------------------------------------------
-# FREQUENT ITEMSETS
-# --------------------------------------------------
-st.subheader("📌 Frequent Itemsets")
+    rules = association_rules(
+        frequent_itemsets,
+        metric="confidence",
+        min_threshold=min_confidence
+    )
 
-frequent_itemsets = apriori(
-    binary_df,
-    min_support=min_support,
-    use_colnames=True
-)
+    rules = rules[rules["lift"] >= min_lift]
+    rules = rules.sort_values(["confidence", "lift"], ascending=False)
 
-frequent_itemsets["length"] = frequent_itemsets["itemsets"].apply(len)
-frequent_itemsets = frequent_itemsets.sort_values("support", ascending=False)
+    # Fix frozenset → string
+    rules["antecedents_str"] = rules["antecedents"].apply(lambda x: ", ".join(list(x)))
+    rules["consequents_str"] = rules["consequents"].apply(lambda x: ", ".join(list(x)))
 
-st.write("Total Itemsets Found:", len(frequent_itemsets))
-st.dataframe(frequent_itemsets.head(20), use_container_width=True)
+    st.write("Total Rules:", len(rules))
+    st.dataframe(rules.head(20), use_container_width=True)
 
-# --------------------------------------------------
-# ASSOCIATION RULES
-# --------------------------------------------------
-st.subheader("🔗 Association Rules")
+    # -----------------------------
+    # Top 10 Rules
+    # -----------------------------
+    st.subheader("🏆 Top 10 Associations")
 
-rules = association_rules(
-    frequent_itemsets,
-    metric="confidence",
-    min_threshold=min_confidence
-)
+    top10 = rules.head(10)[
+        ["antecedents_str", "consequents_str", "support", "confidence", "lift"]
+    ]
+    st.dataframe(top10, use_container_width=True)
 
-rules = rules[rules["lift"] >= min_lift]
-rules = rules.sort_values(["confidence", "lift"], ascending=False)
+    # -----------------------------
+    # Visualizations
+    # -----------------------------
+    st.subheader("📊 Visual Analytics")
 
-# 🔧 FIX: Convert frozenset → string (Plotly safe)
-rules["antecedents_str"] = rules["antecedents"].apply(lambda x: ", ".join(list(x)))
-rules["consequents_str"] = rules["consequents"].apply(lambda x: ", ".join(list(x)))
+    col1, col2 = st.columns(2)
 
-st.write("Total Rules Generated:", len(rules))
-st.dataframe(rules.head(20), use_container_width=True)
+    with col1:
+        top_items = frequent_itemsets.head(10).copy()
+        top_items["itemsets_str"] = top_items["itemsets"].astype(str)
 
-# --------------------------------------------------
-# TOP 10 RULES TABLE
-# --------------------------------------------------
-st.subheader("🏆 Top 10 Associations")
+        fig1 = px.bar(
+            top_items,
+            x="support",
+            y="itemsets_str",
+            orientation="h",
+            title="Top Itemsets by Support"
+        )
+        st.plotly_chart(fig1, use_container_width=True)
 
-top10 = rules.head(10)[
-    ["antecedents_str", "consequents_str", "support", "confidence", "lift"]
-]
+    with col2:
+        top_rules = rules.head(10).copy()
 
-st.dataframe(top10, use_container_width=True)
+        fig2 = px.bar(
+            top_rules,
+            x="confidence",
+            y="antecedents_str",
+            orientation="h",
+            title="Top Rules by Confidence"
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
-# --------------------------------------------------
-# VISUALIZATION 1 — SUPPORT BAR CHART
-# --------------------------------------------------
-st.subheader("📊 Top Itemsets by Support")
+    # Scatter
+    fig3 = px.scatter(
+        rules,
+        x="confidence",
+        y="lift",
+        size="support",
+        hover_data=["antecedents_str", "consequents_str"],
+        title="Lift vs Confidence"
+    )
+    st.plotly_chart(fig3, use_container_width=True)
 
-top_items = frequent_itemsets.head(10).copy()
-top_items["itemsets_str"] = top_items["itemsets"].astype(str)
+    # Heatmap
+    st.subheader("🔥 Metric Correlation Heatmap")
 
-fig1 = px.bar(
-    top_items,
-    x="support",
-    y="itemsets_str",
-    orientation="h",
-    title="Top 10 Frequent Itemsets"
-)
+    heatmap_data = rules[["support", "confidence", "lift", "leverage", "conviction"]]
+    fig4, ax = plt.subplots()
+    sns.heatmap(heatmap_data.corr(), annot=True, cmap="coolwarm", ax=ax)
+    st.pyplot(fig4)
 
-st.plotly_chart(fig1, use_container_width=True)
+    # Network Graph
+    st.subheader("🕸 Association Network")
 
-# --------------------------------------------------
-# VISUALIZATION 2 — CONFIDENCE BAR CHART
-# --------------------------------------------------
-st.subheader("📈 Top Rules by Confidence")
+    G = nx.DiGraph()
+    network_rules = rules.head(15)
 
-top_rules = rules.head(10).copy()
+    for _, row in network_rules.iterrows():
+        G.add_edge(row["antecedents_str"], row["consequents_str"])
 
-fig2 = px.bar(
-    top_rules,
-    x="confidence",
-    y="antecedents_str",
-    orientation="h",
-    title="Top 10 Rules by Confidence"
-)
+    pos = nx.spring_layout(G, seed=42)
 
-st.plotly_chart(fig2, use_container_width=True)
+    fig5, ax = plt.subplots(figsize=(8, 6))
+    nx.draw(G, pos, with_labels=True, node_size=2500, font_size=10, ax=ax)
+    st.pyplot(fig5)
 
-# --------------------------------------------------
-# VISUALIZATION 3 — LIFT VS CONFIDENCE SCATTER
-# --------------------------------------------------
-st.subheader("📉 Lift vs Confidence")
+# ======================================================
+# ================= K-MEANS PAGE ========================
+# ======================================================
+elif page == "📈 K-Means Clustering":
 
-fig3 = px.scatter(
-    rules,
-    x="confidence",
-    y="lift",
-    size="support",
-    hover_data=["antecedents_str", "consequents_str"],
-    title="Lift vs Confidence Scatter Plot"
-)
+    st.header("📈 K-Means Clustering")
 
-st.plotly_chart(fig3, use_container_width=True)
+    with st.expander("📄 Dataset Preview"):
+        st.dataframe(df.head())
 
-# --------------------------------------------------
-# VISUALIZATION 4 — HEATMAP
-# --------------------------------------------------
-st.subheader("🔥 Metric Correlation Heatmap")
+    # -----------------------------
+    # Numeric Columns
+    # -----------------------------
+    num_df = df.select_dtypes(include=np.number)
 
-heatmap_data = rules[["support", "confidence", "lift", "leverage", "conviction"]]
+    st.write("Numeric Features Used:", list(num_df.columns))
 
-fig4, ax = plt.subplots()
-sns.heatmap(
-    heatmap_data.corr(),
-    annot=True,
-    cmap="coolwarm",
-    ax=ax
-)
-st.pyplot(fig4)
+    # -----------------------------
+    # Scaling
+    # -----------------------------
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(num_df)
 
-# --------------------------------------------------
-# VISUALIZATION 5 — NETWORK GRAPH
-# --------------------------------------------------
-st.subheader("🕸 Association Network Map")
+    # -----------------------------
+    # Sidebar Controls
+    # -----------------------------
+    st.sidebar.subheader("⚙️ Clustering Controls")
+    k = st.sidebar.slider("Number of Clusters (K)", 2, 8, 3)
 
-G = nx.DiGraph()
-network_rules = rules.head(15)
+    # -----------------------------
+    # Elbow Method
+    # -----------------------------
+    st.subheader("📉 Elbow Method")
 
-for _, row in network_rules.iterrows():
-    a = row["antecedents_str"]
-    c = row["consequents_str"]
-    G.add_edge(a, c, weight=row["confidence"])
+    wcss = []
+    K_range = range(2, 9)
+    for i in K_range:
+        km = KMeans(n_clusters=i, random_state=42)
+        km.fit(scaled_data)
+        wcss.append(km.inertia_)
 
-pos = nx.spring_layout(G, seed=42)
+    fig6 = px.line(
+        x=list(K_range),
+        y=wcss,
+        markers=True,
+        title="Elbow Curve (WCSS vs K)",
+        labels={"x": "Number of Clusters", "y": "WCSS"}
+    )
+    st.plotly_chart(fig6, use_container_width=True)
 
-fig5, ax = plt.subplots(figsize=(8, 6))
-nx.draw(
-    G,
-    pos,
-    with_labels=True,
-    node_size=2500,
-    font_size=10,
-    ax=ax
-)
+    # -----------------------------
+    # Silhouette Score
+    # -----------------------------
+    st.subheader("📐 Silhouette Score")
 
-st.pyplot(fig5)
+    sil_scores = []
+    for i in K_range:
+        labels = KMeans(n_clusters=i, random_state=42).fit_predict(scaled_data)
+        sil_scores.append(silhouette_score(scaled_data, labels))
 
-# --------------------------------------------------
-# BUSINESS INSIGHTS
-# --------------------------------------------------
-st.subheader("💡 Business Insights")
+    fig7 = px.line(
+        x=list(K_range),
+        y=sil_scores,
+        markers=True,
+        title="Silhouette Score vs K",
+        labels={"x": "Number of Clusters", "y": "Silhouette Score"}
+    )
+    st.plotly_chart(fig7, use_container_width=True)
 
-st.markdown("""
-### 🎯 How to Interpret This Dashboard
+    # -----------------------------
+    # KMeans Model
+    # -----------------------------
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    clusters = kmeans.fit_predict(scaled_data)
 
-- **High Support** → Popular product combinations  
-- **High Confidence** → Strong upselling opportunity  
-- **High Lift** → True association beyond randomness  
-- **Network Graph** → Cross-sell relationship visualization  
+    df_clustered = num_df.copy()
+    df_clustered["Cluster"] = clusters
 
-### 📌 Business Value
-✔ Product Bundling Strategy  
-✔ Targeted Campaign Design  
-✔ Cross-sell Optimization  
-✔ Revenue Growth Enablement  
-✔ Customer Behavior Intelligence  
+    st.subheader("📊 Cluster Distribution")
+    st.dataframe(df_clustered["Cluster"].value_counts().reset_index())
 
-This dashboard transforms analytical models into actionable decision intelligence.
-""")
+    # -----------------------------
+    # PCA Visualization
+    # -----------------------------
+    st.subheader("📍 PCA Cluster Visualization")
+
+    pca = PCA(n_components=2)
+    pca_data = pca.fit_transform(scaled_data)
+
+    pca_df = pd.DataFrame(pca_data, columns=["PC1", "PC2"])
+    pca_df["Cluster"] = clusters.astype(str)
+
+    fig8 = px.scatter(
+        pca_df,
+        x="PC1",
+        y="PC2",
+        color="Cluster",
+        title="Customer Segmentation using PCA + KMeans"
+    )
+    st.plotly_chart(fig8, use_container_width=True)
+
+    # -----------------------------
+    # Cluster Profiling
+    # -----------------------------
+    st.subheader("🧮 Cluster Profiling")
+
+    cluster_profile = df_clustered.groupby("Cluster").mean().round(2)
+    st.dataframe(cluster_profile, use_container_width=True)
+
+    # -----------------------------
+    # Business Interpretation
+    # -----------------------------
+    st.subheader("💡 Business Insights")
+
+    st.markdown("""
+    - Clusters represent distinct customer segments based on behavioral attributes.
+    - PCA visualization helps understand cluster separation.
+    - Elbow + Silhouette support optimal cluster selection.
+    - Cluster profiling supports targeted marketing and personalization.
+    - Enables segmentation-driven cross-selling strategy alignment.
+    """)
+
+# ======================================================
+# FOOTER
+# ======================================================
+st.markdown("---")
+st.caption("🚀 Built for MBA Analytics Portfolio | Streamlit Dashboard")
